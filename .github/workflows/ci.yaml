@@ -65,28 +65,33 @@ jobs:
               node3) PORT=18448; RPCPORT=18447 ;;
             esac
 
-            cat > "$DIR/bitcoin.conf" <<EOF
-          regtest=1
-          server=1
-          daemon=0
-          listen=1
+            # The heredoc terminator (EOF) MUST be flush-left with no indentation.
+            # Any leading whitespace is written literally into the file and bitcoind
+            # will silently reject the indented keys, causing RPC to never bind.
+            # Port settings go only in [regtest] to avoid duplicate-key confusion.
+            cat > "$DIR/bitcoin.conf" << 'CONFEOF'
+                regtest=1
+                server=1
+                listen=1
+                rpcuser=user
+                rpcpassword=password
+                rpcallowip=127.0.0.1
+                fallbackfee=0.0001
+                CONFEOF
 
-          port=$PORT
-          rpcport=$RPCPORT
-          rpcuser=user
-          rpcpassword=password
-          rpcallowip=127.0.0.1
+                            # Append the per-node port settings (can't use single-quoted heredoc with vars)
+                            cat >> "$DIR/bitcoin.conf" <<CONFEOF
 
-          fallbackfee=0.0001
-          mintxfee=0.00001
+                [regtest]
+                port=$PORT
+                rpcport=$RPCPORT
+                CONFEOF
 
-          [regtest]
-          port=$PORT
-          rpcport=$RPCPORT
-          EOF
-          done
+                            echo "--- $NODE/bitcoin.conf ---"
+                            cat "$DIR/bitcoin.conf"
+                          done
 
-          echo "✅ Config written for node1 (miner), node2, node3"
+                          echo "✅ Config written for node1 (miner), node2, node3"
 
       # ────────────────────────────────────────────────
       # 3. START THE CLUSTER
@@ -99,7 +104,8 @@ jobs:
           wait_for_rpc() {
             local NAME=$1
             local PORT=$2
-            local RETRIES=30
+            local DATADIR=$3
+            local RETRIES=45
             echo "⏳ Waiting for $NAME (RPC :$PORT)..."
             for i in $(seq 1 $RETRIES); do
               if bitcoin-cli \
@@ -114,11 +120,14 @@ jobs:
               sleep 1
             done
             echo "  ❌ $NAME did not become ready after ${RETRIES}s"
+            echo "  --- debug: last 20 lines of debug.log ---"
+            tail -20 "$DATADIR/regtest/debug.log" 2>/dev/null || echo "  (no debug.log found)"
+            echo "  --- bitcoin.conf ---"
+            cat "$DATADIR/bitcoin.conf" 2>/dev/null || true
             return 1
           }
 
           # Start each node then immediately wait for it before starting the next.
-          # This avoids a race where addnode is called before all daemons are up.
           for NODE in node1 node2 node3; do
             DATADIR="$HOME/.bitcoin/$NODE"
             case $NODE in
@@ -128,9 +137,8 @@ jobs:
             esac
 
             echo "🚀 Starting $NODE..."
-            # -daemonwait blocks until the node has initialised its RPC server
             bitcoind -datadir="$DATADIR" -daemonwait
-            wait_for_rpc "$NODE" "$RPCPORT"
+            wait_for_rpc "$NODE" "$RPCPORT" "$DATADIR"
           done
 
           echo "✅ All 3 nodes are up"
