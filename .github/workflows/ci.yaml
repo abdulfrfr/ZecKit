@@ -95,27 +95,45 @@ jobs:
         run: |
           set -euo pipefail
 
-          start_node() {
-            local NODE=$1
-            local DATADIR="$HOME/.bitcoin/$NODE"
-            echo "🚀 Starting $NODE..."
-            bitcoind -datadir="$DATADIR" -daemonwait
-          }
-
-          start_node node1
-          start_node node2
-          start_node node3
-
-          echo "⏳ Waiting for RPC on all nodes..."
-          for RPCPORT in 18443 18445 18447; do
-            for i in $(seq 1 20); do
-              if bitcoin-cli -rpcport=$RPCPORT -rpcuser=user -rpcpassword=password -regtest ping 2>/dev/null; then
-                echo "  ✅ RPC ready on port $RPCPORT"
-                break
+          # Helper: wait until a node's RPC is accepting connections, or fail hard
+          wait_for_rpc() {
+            local NAME=$1
+            local PORT=$2
+            local RETRIES=30
+            echo "⏳ Waiting for $NAME (RPC :$PORT)..."
+            for i in $(seq 1 $RETRIES); do
+              if bitcoin-cli \
+                  -rpcport="$PORT" \
+                  -rpcuser=user \
+                  -rpcpassword=password \
+                  -regtest \
+                  ping 2>/dev/null; then
+                echo "  ✅ $NAME is ready (attempt $i)"
+                return 0
               fi
               sleep 1
             done
+            echo "  ❌ $NAME did not become ready after ${RETRIES}s"
+            return 1
+          }
+
+          # Start each node then immediately wait for it before starting the next.
+          # This avoids a race where addnode is called before all daemons are up.
+          for NODE in node1 node2 node3; do
+            DATADIR="$HOME/.bitcoin/$NODE"
+            case $NODE in
+              node1) RPCPORT=18443 ;;
+              node2) RPCPORT=18445 ;;
+              node3) RPCPORT=18447 ;;
+            esac
+
+            echo "🚀 Starting $NODE..."
+            # -daemonwait blocks until the node has initialised its RPC server
+            bitcoind -datadir="$DATADIR" -daemonwait
+            wait_for_rpc "$NODE" "$RPCPORT"
           done
+
+          echo "✅ All 3 nodes are up"
 
       - name: Connect nodes into a cluster
         run: |
@@ -131,7 +149,24 @@ jobs:
           $CLI2 addnode "127.0.0.1:18444" add
           $CLI3 addnode "127.0.0.1:18444" add
 
-          sleep 3
+          # Wait for at least 1 peer on every node before continuing
+          wait_for_peers() {
+            local NAME=$1
+            local CLI=$2
+            for i in $(seq 1 15); do
+              COUNT=$($CLI getconnectioncount 2>/dev/null || echo 0)
+              if [ "$COUNT" -ge 1 ]; then
+                echo "  ✅ $NAME has $COUNT peer(s)"
+                return 0
+              fi
+              sleep 1
+            done
+            echo "  ⚠️  $NAME has no peers after 15s (non-fatal)"
+          }
+
+          wait_for_peers "node1" "$CLI1"
+          wait_for_peers "node2" "$CLI2"
+          wait_for_peers "node3" "$CLI3"
 
           echo "📡 Peer connections:"
           echo "node1: $($CLI1 getconnectioncount) peers"
