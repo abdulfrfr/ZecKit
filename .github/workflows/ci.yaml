@@ -155,33 +155,37 @@ jobs:
         run: |
           set -euo pipefail
 
-          CLI1="bitcoin-cli -rpcport=18443 -rpcuser=user -rpcpassword=password -regtest"
-          CLI2="bitcoin-cli -rpcport=18445 -rpcuser=user -rpcpassword=password -regtest"
-          CLI3="bitcoin-cli -rpcport=18447 -rpcuser=user -rpcpassword=password -regtest"
+          CLI1="bitcoin-cli -datadir=$HOME/.bitcoin/node1 -regtest"
+          CLI2="bitcoin-cli -datadir=$HOME/.bitcoin/node2 -regtest"
+          CLI3="bitcoin-cli -datadir=$HOME/.bitcoin/node3 -regtest"
 
           wait_for_rpc_ready() {
-            local PORT=$1
-            local NAME=$2
+            local CLI="$1"
+            local NAME="$2"
+
             for i in {1..30}; do
-              if bitcoin-cli -rpcport=$PORT -rpcuser=user -rpcpassword=password -regtest getblockcount >/dev/null 2>&1; then
+              if $CLI getblockcount >/dev/null 2>&1; then
                 echo "✅ $NAME RPC ready"
                 return 0
               fi
               sleep 1
             done
+
             echo "❌ $NAME RPC not ready"
             exit 1
           }
 
-          wait_for_rpc_ready 18443 node1
-          wait_for_rpc_ready 18445 node2
-          wait_for_rpc_ready 18447 node3
+          wait_for_rpc_ready "$CLI1" node1
+          wait_for_rpc_ready "$CLI2" node2
+          wait_for_rpc_ready "$CLI3" node3
 
           # Connect nodes
           $CLI1 addnode "127.0.0.1:18446" add
           $CLI1 addnode "127.0.0.1:18448" add
           $CLI2 addnode "127.0.0.1:18444" add
           $CLI3 addnode "127.0.0.1:18444" add
+
+          sleep 2
 
       # ────────────────────────────────────────────────
       # 4. CREATE WALLETS
