@@ -71,7 +71,6 @@ jobs:
 
           for NODE in node1 node2 node3; do
               DIR="$HOME/.bitcoin/$NODE"
-              mkdir -p "$DIR"
 
               case $NODE in
                 node1) PORT=$P2P1; RPCPORT=$RPC1 ;;
@@ -80,24 +79,22 @@ jobs:
               esac
 
               cat > "$DIR/bitcoin.conf" <<EOF
-          regtest=1
-          server=1
-          listen=1
-          rpcuser=user
-          rpcpassword=password
-          rpcallowip=127.0.0.1
-          fallbackfee=0.0001
+            regtest=1
+            server=1
+            listen=1
+            rpcuser=user
+            rpcpassword=password
+            rpcallowip=127.0.0.1
+            fallbackfee=0.0001
 
-          [regtest]
-          port=$PORT
-          rpcport=$RPCPORT
-          bind=127.0.0.1
-          rpcbind=127.0.0.1
-          EOF
+            [regtest]
+            port=$PORT
+            rpcport=$RPCPORT
+            bind=127.0.0.1
+            rpcbind=127.0.0.1
+            EOF
 
-              echo "--- $NODE/bitcoin.conf ---"
-              cat "$DIR/bitcoin.conf"
-          done
+            done
 
           echo "✅ Config written for node1 (miner), node2, node3"
 
@@ -147,6 +144,10 @@ jobs:
                   sleep 1
               done
           done
+
+          rm -rf $HOME/.bitcoin/node1
+          rm -rf $HOME/.bitcoin/node2
+          rm -rf $HOME/.bitcoin/node3
 
           mkdir -p $HOME/.bitcoin/node1
           mkdir -p $HOME/.bitcoin/node2
