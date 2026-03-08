@@ -180,9 +180,9 @@ jobs:
             exit 1
           }
 
-          wait_for_rpc_ready "$CLI1" node1
-          wait_for_rpc_ready "$CLI2" node2
-          wait_for_rpc_ready "$CLI3" node3
+          wait_for_rpc_ready "$CLI1" node1 "$HOME/.bitcoin/node1"
+          wait_for_rpc_ready "$CLI2" node2 "$HOME/.bitcoin/node2"
+          wait_for_rpc_ready "$CLI3" node3 "$HOME/.bitcoin/node3"
 
           # Connect nodes
           $CLI1 addnode "127.0.0.1:18446" add
