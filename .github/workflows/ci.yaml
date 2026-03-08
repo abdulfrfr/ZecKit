@@ -94,13 +94,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          sudo pkill -f bitcoind || true
-          sleep 3
+          echo "🧹 Killing any existing bitcoind..."
+          sudo pkill -9 bitcoind || true
+          sleep 2
 
+          echo "🧹 Ensure ports are free..."
           for PORT in 18443 18444 18445 18446 18447 18448; do
               sudo fuser -k ${PORT}/tcp 2>/dev/null || true
           done
-          sleep 2
+          sleep 1
 
           mkdir -p $HOME/.bitcoin/node1
           mkdir -p $HOME/.bitcoin/node2
@@ -130,28 +132,27 @@ jobs:
           ps aux | grep bitcoind || true
           ss -ltnp | grep 184 || true
 
-          # Start nodes
-          for NODE in node1 node2 node3; do
-              DATADIR="$HOME/.bitcoin/$NODE"
+          # Start nodes safely
+            for NODE in node1 node2 node3; do
+                DATADIR="$HOME/.bitcoin/$NODE"
+                case $NODE in
+                    node1) RPCPORT=18443 ;;
+                    node2) RPCPORT=18445 ;;
+                    node3) RPCPORT=18447 ;;
+                esac
 
-              case $NODE in
-                  node1) RPCPORT=18443 ;;
-                  node2) RPCPORT=18445 ;;
-                  node3) RPCPORT=18447 ;;
-              esac
+                echo "🚀 Starting $NODE"
+                bitcoind -conf="$DATADIR/bitcoin.conf" -datadir="$DATADIR" -daemon
 
-              echo "🚀 Starting $NODE"
-              bitcoind -conf="$DATADIR/bitcoin.conf" -datadir="$DATADIR" -daemon
-
-              # Wait for RPC to be ready
-              for i in {1..60}; do
-                  if bitcoin-cli -datadir="$DATADIR" -regtest getblockcount >/dev/null 2>&1; then
-                      echo "✅ $NODE RPC ready"
-                      break
-                  fi
-                  sleep 1
-              done
-          done
+                # Wait for RPC ready
+                for i in {1..60}; do
+                    if bitcoin-cli -datadir="$DATADIR" -regtest getblockcount >/dev/null 2>&1; then
+                        echo "✅ $NODE RPC ready"
+                        break
+                    fi
+                    sleep 1
+                done
+            done
 
           for PORT in 18443 18445 18447; do
               while ss -ltnp | grep $PORT >/dev/null 2>&1; do
