@@ -200,6 +200,10 @@ jobs:
         run: |
           set -euo pipefail
 
+          # kill any leftover nodes
+          pkill -9 bitcoind || true
+          sleep 2
+
           # calculate dynamic ports
           P2P1=$BASE_PORT
           P2P2=$((BASE_PORT+10))
