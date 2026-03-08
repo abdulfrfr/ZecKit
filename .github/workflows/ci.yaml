@@ -119,7 +119,10 @@ jobs:
             DATADIR="$HOME/.bitcoin/$NODE"
 
             echo "🚀 Starting $NODE"
-            bitcoind -datadir="$DATADIR" -daemon
+            bitcoind \
+            -conf="$DATADIR/bitcoin.conf" \
+            -datadir="$DATADIR" \
+            -daemon
 
             wait_for_rpc "$NODE" "$DATADIR"
           done
