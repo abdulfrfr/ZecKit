@@ -211,8 +211,7 @@ jobs:
       - name: Resolve target fund address
         run: |
           set -euo pipefail
-          CLI3="bitcoin-cli -rpcport=18447 -rpcuser=user -rpcpassword=password -regtest -rpcwallet=node3_wallet"
-          # Use manually provided address or auto-generate one on node3
+          CLI3="bitcoin-cli -rpcport=18464 -rpcuser=user -rpcpassword=password -regtest -rpcwallet=node3_wallet"
           if [ -n "${{ github.event.inputs.fund_address }}" ]; then
             TARGET_ADDR="${{ github.event.inputs.fund_address }}"
             echo "📌 Using provided address: $TARGET_ADDR"
@@ -221,34 +220,32 @@ jobs:
             echo "📌 Auto-generated address on node3: $TARGET_ADDR"
           fi
           echo "TARGET_ADDR=$TARGET_ADDR" >> $GITHUB_ENV
+
       # ────────────────────────────────────────────────
       # 7. SEND FUNDS
       # ────────────────────────────────────────────────
       - name: Send funds to target address
         run: |
           set -euo pipefail
-          CLI1="bitcoin-cli -rpcport=18443 -rpcuser=user -rpcpassword=password -regtest -rpcwallet=miner_wallet"
+          CLI1="bitcoin-cli -rpcport=18460 -rpcuser=user -rpcpassword=password -regtest -rpcwallet=miner_wallet"
           echo "💸 Sending $FUND_AMOUNT BTC → $TARGET_ADDR"
           TXID=$($CLI1 sendtoaddress "$TARGET_ADDR" $FUND_AMOUNT)
           echo "📝 TXID: $TXID"
-          # Mine 6 more blocks to confirm the transaction
           $CLI1 generatetoaddress 6 "$MINER_ADDR" > /dev/null
           echo "⛏️  Mined 6 confirmation blocks"
           echo "TXID=$TXID" >> $GITHUB_ENV
+
       # ────────────────────────────────────────────────
       # 8. VERIFY FUNDS AT ADDRESS
       # ────────────────────────────────────────────────
       - name: Verify funds are present at address
         run: |
           set -euo pipefail
-          # Use whichever node owns the wallet with the target address
-          # For auto-generated addresses -> node3; for external -> scan node3 anyway
-          CLI3="bitcoin-cli -rpcport=18447 -rpcuser=user -rpcpassword=password -regtest -rpcwallet=node3_wallet"
-          CLI1="bitcoin-cli -rpcport=18443 -rpcuser=user -rpcpassword=password -regtest -rpcwallet=miner_wallet"
+          CLI1="bitcoin-cli -rpcport=18460 -rpcuser=user -rpcpassword=password -regtest -rpcwallet=miner_wallet"
+          CLI3="bitcoin-cli -rpcport=18464 -rpcuser=user -rpcpassword=password -regtest -rpcwallet=node3_wallet"
           echo "🔍 Verifying transaction on-chain..."
-          # 1. Confirm tx is included in a block
           TX_INFO=$($CLI1 gettransaction "$TXID" true 2>/dev/null || \
-                    bitcoin-cli -rpcport=18447 -rpcuser=user -rpcpassword=password -regtest \
+                    bitcoin-cli -rpcport=18464 -rpcuser=user -rpcpassword=password -regtest \
                       -rpcwallet=node3_wallet gettransaction "$TXID" true)
           CONFIRMATIONS=$(echo "$TX_INFO" | python3 -c "import sys,json; print(json.load(sys.stdin)['confirmations'])")
           echo "✅ Confirmations: $CONFIRMATIONS"
@@ -256,19 +253,16 @@ jobs:
             echo "❌ Transaction is unconfirmed!"
             exit 1
           fi
-          # 2. Check received amount at the address (node3 wallet for auto-generated)
           if [ -z "${{ github.event.inputs.fund_address }}" ]; then
             RECEIVED=$($CLI3 getreceivedbyaddress "$TARGET_ADDR" 1)
             echo "💰 Received at $TARGET_ADDR: $RECEIVED BTC"
-            EXPECTED=$(python3 -c "print($FUND_AMOUNT)")
-            OK=$(python3 -c "print('yes' if float('$RECEIVED') >= float('$EXPECTED') else 'no')")
+            OK=$(python3 -c "print('yes' if float('$RECEIVED') >= float('$FUND_AMOUNT') else 'no')")
             if [ "$OK" != "yes" ]; then
               echo "❌ Expected at least $FUND_AMOUNT BTC, got $RECEIVED BTC"
               exit 1
             fi
             echo "✅ Balance check passed: $RECEIVED BTC >= $FUND_AMOUNT BTC"
           else
-            # For externally provided addresses, verify via scantxoutset
             echo "🔎 Scanning UTXO set for external address $TARGET_ADDR..."
             SCAN=$($CLI1 scantxoutset start "[\"addr($TARGET_ADDR)\"]")
             TOTAL=$(echo "$SCAN" | python3 -c "import sys,json; print(json.load(sys.stdin)['total_amount'])")
@@ -280,6 +274,7 @@ jobs:
             fi
             echo "✅ Balance check passed: $TOTAL BTC >= $FUND_AMOUNT BTC"
           fi
+
       # ────────────────────────────────────────────────
       # 9. SUMMARY
       # ────────────────────────────────────────────────
@@ -289,7 +284,7 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "       Bitcoin Regtest CI Summary"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          for NODE_INFO in "node1:18443" "node2:18445" "node3:18447"; do
+          for NODE_INFO in "node1:18460" "node2:18462" "node3:18464"; do
             NODE="${NODE_INFO%%:*}"
             PORT="${NODE_INFO##*:}"
             HEIGHT=$(bitcoin-cli -rpcport=$PORT -rpcuser=user -rpcpassword=password \
@@ -303,13 +298,14 @@ jobs:
           echo "  Target address: ${TARGET_ADDR:-n/a}"
           echo "  Amount sent:    $FUND_AMOUNT BTC"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
       # ────────────────────────────────────────────────
       # 10. TEARDOWN
       # ────────────────────────────────────────────────
       - name: Stop all nodes
         if: always()
         run: |
-          for RPCPORT in 18443 18445 18447; do
+          for RPCPORT in 18460 18462 18464; do
             bitcoin-cli -rpcport=$RPCPORT -rpcuser=user -rpcpassword=password \
               -regtest stop 2>/dev/null && echo "Stopped node on port $RPCPORT" || true
           done
