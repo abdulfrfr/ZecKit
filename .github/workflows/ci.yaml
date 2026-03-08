@@ -98,61 +98,42 @@ jobs:
           mkdir -p $HOME/.bitcoin/node2
           mkdir -p $HOME/.bitcoin/node3
 
-          # Kill anything using Bitcoin regtest ports
-          for PORT in 18443 18444 18445 18446 18447 18448; do
-            fuser -k ${PORT}/tcp 2>/dev/null || true
-          done
 
+          # Kill old bitcoind processes / free ports
+          for PORT in 18443 18444 18445 18446 18447 18448; do
+              fuser -k ${PORT}/tcp 2>/dev/null || true
+          done
           sleep 2
 
+          # Show running processes for debug
+          ps aux | grep bitcoind || true
           ss -ltnp | grep 184 || true
 
-          wait_for_rpc() {
-            local NAME=$1
-            local DATADIR=$2
-            local RETRIES=45
-
-            echo "⏳ Waiting for $NAME..."
-
-            for i in $(seq 1 $RETRIES); do
-              if bitcoin-cli -datadir="$DATADIR" ping 2>/dev/null; then
-                echo "  ✅ $NAME ready (attempt $i)"
-                return 0
-              fi
-              sleep 1
-            done
-
-            echo "❌ $NAME did not start"
-            tail -20 "$DATADIR/regtest/debug.log" || true
-            exit 1
-          }
-
+          # Start nodes
           for NODE in node1 node2 node3; do
-            DATADIR="$HOME/.bitcoin/$NODE"
+              DATADIR="$HOME/.bitcoin/$NODE"
 
-            case $NODE in
-              node1) RPCPORT=18443 ;;
-              node2) RPCPORT=18445 ;;
-              node3) RPCPORT=18447 ;;
-            esac
+              case $NODE in
+                  node1) RPCPORT=18443 ;;
+                  node2) RPCPORT=18445 ;;
+                  node3) RPCPORT=18447 ;;
+              esac
 
-            echo "🚀 Starting $NODE"
+              echo "🚀 Starting $NODE"
 
-            bitcoind \
-              -conf="$DATADIR/bitcoin.conf" \
-              -datadir="$DATADIR" \
-              -daemon
+              bitcoind -conf="$DATADIR/bitcoin.conf" -datadir="$DATADIR" -daemon
 
-            for i in {1..45}; do
-              if bitcoin-cli -rpcport=$RPCPORT -rpcuser=user -rpcpassword=password -regtest ping 2>/dev/null; then
-                echo "  ✅ $NODE ready"
-                break
-              fi
-              sleep 1
-            done
+              for i in {1..60}; do
+                  if bitcoin-cli -rpcport=$RPCPORT -rpcuser=user -rpcpassword=password -regtest ping >/dev/null 2>&1; then
+                      echo "  ✅ $NODE ready"
+                      break
+                  fi
+                  sleep 1
+              done
           done
 
           echo "✅ All nodes running"
+          
       - name: Connect nodes into a cluster
         run: |
           set -euo pipefail
