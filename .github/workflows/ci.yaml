@@ -231,7 +231,7 @@ jobs:
           ps aux | grep bitcoind || true
           ss -ltnp | grep 184 || true
 
-          # Start nodes safely
+          # START NODES
           bitcoind -datadir=$HOME/.bitcoin/node1 \
             -port=$P2P1 \
             -rpcport=$RPC1 \
