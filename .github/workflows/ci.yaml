@@ -94,17 +94,17 @@ jobs:
         run: |
           set -euo pipefail
 
+          sudo pkill -f bitcoind || true
+          sleep 3
+
+          for PORT in 18443 18444 18445 18446 18447 18448; do
+              sudo fuser -k ${PORT}/tcp 2>/dev/null || true
+          done
+          sleep 2
+
           mkdir -p $HOME/.bitcoin/node1
           mkdir -p $HOME/.bitcoin/node2
           mkdir -p $HOME/.bitcoin/node3
-
-          pkill -f bitcoind || true
-          sleep 2
-
-          for PORT in 18443 18444 18445 18446 18447 18448; do
-              fuser -k ${PORT}/tcp 2>/dev/null || true
-          done
-          sleep 2
 
 
           wait_for_rpc_ready() {
@@ -141,10 +141,23 @@ jobs:
               esac
 
               echo "🚀 Starting $NODE"
-
               bitcoind -conf="$DATADIR/bitcoin.conf" -datadir="$DATADIR" -daemon
 
-              wait_for_rpc_ready "bitcoin-cli -datadir=$DATADIR -regtest" "$NODE" "$DATADIR"
+              # Wait for RPC to be ready
+              for i in {1..60}; do
+                  if bitcoin-cli -datadir="$DATADIR" -regtest getblockcount >/dev/null 2>&1; then
+                      echo "✅ $NODE RPC ready"
+                      break
+                  fi
+                  sleep 1
+              done
+          done
+
+          for PORT in 18443 18445 18447; do
+              while ss -ltnp | grep $PORT >/dev/null 2>&1; do
+                  echo "⏳ Waiting for port $PORT to free up..."
+                  sleep 1
+              done
           done
 
           echo "✅ All nodes running"
