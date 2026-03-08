@@ -133,30 +133,23 @@ jobs:
           ss -ltnp | grep 184 || true
 
           # Start nodes safely
-            for NODE in node1 node2 node3; do
-                DATADIR="$HOME/.bitcoin/$NODE"
-                case $NODE in
-                    node1) RPCPORT=18443 ;;
-                    node2) RPCPORT=18445 ;;
-                    node3) RPCPORT=18447 ;;
-                esac
+          for NODE in node1 node2 node3; do
+              DATADIR="$HOME/.bitcoin/$NODE"
+              case $NODE in
+                  node1) RPCPORT=18443 ;;
+                  node2) RPCPORT=18445 ;;
+                  node3) RPCPORT=18447 ;;
+              esac
 
-                echo "🚀 Starting $NODE"
-                bitcoind -conf="$DATADIR/bitcoin.conf" -datadir="$DATADIR" -daemon
+              echo "🚀 Starting $NODE"
+              bitcoind -conf="$DATADIR/bitcoin.conf" -datadir="$DATADIR" -daemon
 
-                # Wait for RPC ready
-                for i in {1..60}; do
-                    if bitcoin-cli -datadir="$DATADIR" -regtest getblockcount >/dev/null 2>&1; then
-                        echo "✅ $NODE RPC ready"
-                        break
-                    fi
-                    sleep 1
-                done
-            done
-
-          for PORT in 18443 18445 18447; do
-              while ss -ltnp | grep $PORT >/dev/null 2>&1; do
-                  echo "⏳ Waiting for port $PORT to free up..."
+              # Wait for RPC ready
+              for i in {1..60}; do
+                  if bitcoin-cli -datadir="$DATADIR" -regtest getblockcount >/dev/null 2>&1; then
+                      echo "✅ $NODE RPC ready"
+                      break
+                  fi
                   sleep 1
               done
           done
