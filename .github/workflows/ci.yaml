@@ -98,12 +98,33 @@ jobs:
           mkdir -p $HOME/.bitcoin/node2
           mkdir -p $HOME/.bitcoin/node3
 
+          pkill -f bitcoind || true
+          sleep 2
 
-          # Kill old bitcoind processes / free ports
           for PORT in 18443 18444 18445 18446 18447 18448; do
               fuser -k ${PORT}/tcp 2>/dev/null || true
           done
           sleep 2
+
+
+          wait_for_rpc_ready() {
+              local CLI="$1"
+              local NAME="$2"
+              local DIR="$3"
+
+              for i in {1..60}; do
+                  if $CLI getblockcount >/dev/null 2>&1; then
+                      echo "✅ $NAME RPC ready"
+                      return 0
+                  fi
+                  sleep 1
+              done
+
+              echo "❌ $NAME RPC not ready"
+              echo "---- DEBUG LOG ($NAME) ----"
+              cat "$DIR/regtest/debug.log" || true
+              exit 1
+          }
 
           # Show running processes for debug
           ps aux | grep bitcoind || true
@@ -123,13 +144,7 @@ jobs:
 
               bitcoind -conf="$DATADIR/bitcoin.conf" -datadir="$DATADIR" -daemon
 
-              for i in {1..60}; do
-                  if bitcoin-cli -rpcport=$RPCPORT -rpcuser=user -rpcpassword=password -regtest ping >/dev/null 2>&1; then
-                      echo "  ✅ $NODE ready"
-                      break
-                  fi
-                  sleep 1
-              done
+              wait_for_rpc_ready "bitcoin-cli -datadir=$DATADIR -regtest" "$NODE" "$DATADIR"
           done
 
           echo "✅ All nodes running"
