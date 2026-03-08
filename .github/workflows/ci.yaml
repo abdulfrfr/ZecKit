@@ -108,93 +108,51 @@ jobs:
         run: |
           set -euo pipefail
 
-          RUN_NUMBER=${GITHUB_RUN_NUMBER:-1}   # fallback to 1 if undefined
+          # calculate dynamic ports
+          P2P1=$BASE_PORT
+          P2P2=$((BASE_PORT+2))
+          P2P3=$((BASE_PORT+4))
 
-          # Node RPC and P2P ports
-          RPC1=$((BASE_RPC + RUN_NUMBER * 10 + 1))
-          RPC2=$((BASE_RPC + RUN_NUMBER * 10 + 2))
-          RPC3=$((BASE_RPC + RUN_NUMBER * 10 + 3))
+          RPC1=$BASE_RPC
+          RPC2=$((BASE_RPC+2))
+          RPC3=$((BASE_RPC+4))
 
-          P2P1=$((BASE_PORT + RUN_NUMBER * 10 + 1))
-          P2P2=$((BASE_PORT + RUN_NUMBER * 10 + 2))
-          P2P3=$((BASE_PORT + RUN_NUMBER * 10 + 3))
+          # define CLI shortcuts
+          CLI1="bitcoin-cli -rpcport=$RPC1 -rpcuser=user -rpcpassword=password -regtest"
+          CLI2="bitcoin-cli -rpcport=$RPC2 -rpcuser=user -rpcpassword=password -regtest"
+          CLI3="bitcoin-cli -rpcport=$RPC3 -rpcuser=user -rpcpassword=password -regtest"
 
-          echo "Node1 RPC=$RPC1 P2P=$P2P1"
-          echo "Node2 RPC=$RPC2 P2P=$P2P2"
-          echo "Node3 RPC=$RPC3 P2P=$P2P3"
-
-          echo "🧹 Killing any existing bitcoind..."
-          sudo pkill -9 bitcoind || true
-          sleep 2
-
-          echo "🧹 Waiting for ports to be free..."
-          for PORT in 18443 18444 18445 18446 18447 18448; do
-              while ss -ltnp | grep -q $PORT; do
-                  echo "⏳ Waiting for port $PORT to free up..."
-                  sleep 1
-              done
-          done
-          echo "✅ All ports free"
-
-          echo "🧹 Stopping any leftover nodes from previous runs..."
-          pkill -9 bitcoind || true
-          sleep 2
-
-          # Ensure ports are free
-          for PORT in 18443 18444 18445 18446 18447 18448; do
-              while ss -ltnp | grep -q $PORT; do
-                  fuser -k $PORT/tcp 2>/dev/null || true
-                  sleep 1
-              done
-          done
-
-          mkdir -p $HOME/.bitcoin/node1
-          mkdir -p $HOME/.bitcoin/node2
-          mkdir -p $HOME/.bitcoin/node3
-
-
+          # function to wait for RPC
           wait_for_rpc_ready() {
               local CLI="$1"
               local NAME="$2"
               local DIR="$3"
 
-              for i in {1..90}; do
-                  if bitcoin-cli -rpcport=$RPCPORT -rpcuser=user -rpcpassword=password -regtest getblockcount >/dev/null 2>&1; then
-                      echo "✅ $NODE RPC ready on port $RPCPORT"
-                      break
-                  fi
-                  sleep 1
+              for i in {1..60}; do
+                if $CLI getblockcount >/dev/null 2>&1; then
+                  echo "✅ $NAME RPC ready"
+                  return 0
+                fi
+                sleep 1
               done
 
               echo "❌ $NAME RPC not ready"
               echo "---- DEBUG LOG ($NAME) ----"
-              cat "$DIR/regtest/debug.log" || true
+              cat $DIR/regtest/debug.log || true
               exit 1
           }
 
-          # Show running processes for debug
-          ps aux | grep bitcoind || true
-          ss -ltnp | grep 184 || true
+          wait_for_rpc_ready "$CLI1" node1 "$HOME/.bitcoin/node1"
+          wait_for_rpc_ready "$CLI2" node2 "$HOME/.bitcoin/node2"
+          wait_for_rpc_ready "$CLI3" node3 "$HOME/.bitcoin/node3"
 
-          # Start nodes safely
-          for NODE in node1 node2 node3; do
-              DATADIR="$HOME/.bitcoin/$NODE"
-              RPCPORT=$(grep rpcport "$DATADIR/bitcoin.conf" | cut -d'=' -f2)
+          # connect nodes
+          $CLI1 addnode "127.0.0.1:$P2P2" add
+          $CLI1 addnode "127.0.0.1:$P2P3" add
+          $CLI2 addnode "127.0.0.1:$P2P1" add
+          $CLI3 addnode "127.0.0.1:$P2P1" add
 
-              echo "🚀 Starting $NODE..."
-              bitcoind -conf="$DATADIR/bitcoin.conf" -datadir="$DATADIR" -daemon
-
-              # Wait for RPC to respond
-              for i in {1..60}; do
-                  if bitcoin-cli -rpcport=$RPCPORT -rpcuser=user -rpcpassword=password -regtest getblockcount >/dev/null 2>&1; then
-                      echo "✅ $NODE RPC ready on port $RPCPORT"
-                      break
-                  fi
-                  sleep 1
-              done
-          done
-
-          echo "✅ All nodes running"
+          sleep 2
           
       - name: Connect nodes into a cluster
         run: |
