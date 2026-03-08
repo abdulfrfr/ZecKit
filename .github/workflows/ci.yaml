@@ -14,43 +14,83 @@ on:
 
 env:
   BITCOIN_VERSION: "27.0"
-  FUND_AMOUNT: "10"
-  MINE_BLOCKS: "101"
+  FUND_AMOUNT: "10" # BTC to send to the target address
+  MINE_BLOCKS: "101" # Must be >100 so coinbase is spendable
 
 jobs:
   regtest-cluster:
+    name: Regtest Node Cluster
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
-
-      - uses: actions/checkout@v4
-
-      #################################################
-      # Install Bitcoin Core
-      #################################################
+      # ────────────────────────────────────────────────
+      # 1. SETUP
+      # ────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Install Bitcoin Core
         run: |
           set -euo pipefail
-
           ARCH="x86_64-linux-gnu"
           TARBALL="bitcoin-${BITCOIN_VERSION}-${ARCH}.tar.gz"
           URL="https://bitcoincore.org/bin/bitcoin-core-${BITCOIN_VERSION}/${TARBALL}"
 
+          echo "⬇️  Downloading Bitcoin Core ${BITCOIN_VERSION}..."
           curl -fsSL "$URL" -o "$TARBALL"
           tar -xzf "$TARBALL"
 
+          # Install binaries to PATH
           sudo install -m 0755 bitcoin-${BITCOIN_VERSION}/bin/bitcoind /usr/local/bin/
           sudo install -m 0755 bitcoin-${BITCOIN_VERSION}/bin/bitcoin-cli /usr/local/bin/
 
           bitcoind --version
+          bitcoin-cli --version
 
-      #################################################
-      # Configure nodes
-      #################################################
-
+      # ────────────────────────────────────────────────
+      # 2. CONFIGURE THE CLUSTER (3 nodes: miner + 2 peers)
+      # ────────────────────────────────────────────────
       - name: Configure regtest cluster
+        run: |
+          set -euo pipefail
+
+          for NODE in node1 node2 node3; do
+            DIR="$HOME/.bitcoin/$NODE"
+            mkdir -p "$DIR"
+
+            case $NODE in
+              node1) PORT=18444; RPCPORT=18443 ;;
+              node2) PORT=18446; RPCPORT=18445 ;;
+              node3) PORT=18448; RPCPORT=18447 ;;
+            esac
+
+            cat > "$DIR/bitcoin.conf" <<EOF
+          regtest=1
+          server=1
+          listen=1
+          rpcuser=user
+          rpcpassword=password
+          rpcallowip=127.0.0.1
+          fallbackfee=0.0001
+
+          [regtest]
+          port=$PORT
+          rpcport=$RPCPORT
+          bind=127.0.0.1
+          rpcbind=127.0.0.1
+          EOF
+
+            echo "--- $NODE/bitcoin.conf ---"
+            cat "$DIR/bitcoin.conf"
+          done
+
+          echo "✅ Config written for node1 (miner), node2, node3"
+
+      # ────────────────────────────────────────────────
+      # 3. START THE CLUSTER
+      # ────────────────────────────────────────────────
+      - name: Start regtest nodes
         run: |
           set -euo pipefail
 
@@ -58,182 +98,270 @@ jobs:
           mkdir -p $HOME/.bitcoin/node2
           mkdir -p $HOME/.bitcoin/node3
 
-          cat > $HOME/.bitcoin/node1/bitcoin.conf <<EOF
-          regtest=1
-          server=1
-          fallbackfee=0.0001
-          [regtest]
-          port=18444
-          EOF
+          # Kill anything using Bitcoin regtest ports
+          for PORT in 18443 18444 18445 18446 18447 18448; do
+            fuser -k ${PORT}/tcp 2>/dev/null || true
+          done
 
-          cat > $HOME/.bitcoin/node2/bitcoin.conf <<EOF
-          regtest=1
-          server=1
-          fallbackfee=0.0001
-          [regtest]
-          port=18446
-          EOF
+          sleep 2
 
-          cat > $HOME/.bitcoin/node3/bitcoin.conf <<EOF
-          regtest=1
-          server=1
-          fallbackfee=0.0001
-          [regtest]
-          port=18448
-          EOF
-
-      #################################################
-      # Start nodes
-      #################################################
-
-      - name: Start nodes
-        run: |
-          set -euo pipefail
-
-          bitcoind -datadir=$HOME/.bitcoin/node1 -daemon
-          bitcoind -datadir=$HOME/.bitcoin/node2 -daemon
-          bitcoind -datadir=$HOME/.bitcoin/node3 -daemon
+          ss -ltnp | grep 184 || true
 
           wait_for_rpc() {
-            local CLI=$1
-            local NAME=$2
-            local DIR=$3
+            local NAME=$1
+            local DATADIR=$2
+            local RETRIES=45
 
-            for i in {1..60}; do
-              if $CLI getblockcount >/dev/null 2>&1; then
-                echo "✅ $NAME ready"
+            echo "⏳ Waiting for $NAME..."
+
+            for i in $(seq 1 $RETRIES); do
+              if bitcoin-cli -datadir="$DATADIR" ping 2>/dev/null; then
+                echo "  ✅ $NAME ready (attempt $i)"
                 return 0
               fi
               sleep 1
             done
 
-            echo "❌ $NAME failed to start"
+            echo "❌ $NAME did not start"
+            tail -20 "$DATADIR/regtest/debug.log" || true
+            exit 1
+          }
+
+          for NODE in node1 node2 node3; do
+            DATADIR="$HOME/.bitcoin/$NODE"
+
+            case $NODE in
+              node1) RPCPORT=18443 ;;
+              node2) RPCPORT=18445 ;;
+              node3) RPCPORT=18447 ;;
+            esac
+
+            echo "🚀 Starting $NODE"
+
+            bitcoind \
+              -conf="$DATADIR/bitcoin.conf" \
+              -datadir="$DATADIR" \
+              -daemon
+
+            for i in {1..45}; do
+              if bitcoin-cli -rpcport=$RPCPORT -rpcuser=user -rpcpassword=password -regtest ping 2>/dev/null; then
+                echo "  ✅ $NODE ready"
+                break
+              fi
+              sleep 1
+            done
+          done
+
+          echo "✅ All nodes running"
+      - name: Connect nodes into a cluster
+        run: |
+          set -euo pipefail
+
+          CLI1="bitcoin-cli -datadir=$HOME/.bitcoin/node1 -regtest"
+          CLI2="bitcoin-cli -datadir=$HOME/.bitcoin/node2 -regtest"
+          CLI3="bitcoin-cli -datadir=$HOME/.bitcoin/node3 -regtest"
+
+          wait_for_rpc_ready() {
+            local CLI="$1"
+            local NAME="$2"
+            local DIR="$3"
+
+            for i in {1..60}; do
+              if $CLI getblockcount >/dev/null 2>&1; then
+                echo "✅ $NAME RPC ready"
+                return 0
+              fi
+              sleep 1
+            done
+
+            echo "❌ $NAME RPC not ready"
+            echo "---- DEBUG LOG ($NAME) ----"
             cat $DIR/regtest/debug.log || true
             exit 1
           }
 
-          CLI1="bitcoin-cli -datadir=$HOME/.bitcoin/node1 -regtest"
-          CLI2="bitcoin-cli -datadir=$HOME/.bitcoin/node2 -regtest"
-          CLI3="bitcoin-cli -datadir=$HOME/.bitcoin/node3 -regtest"
+          wait_for_rpc_ready "$CLI1" node1
+          wait_for_rpc_ready "$CLI2" node2
+          wait_for_rpc_ready "$CLI3" node3
 
-          wait_for_rpc "$CLI1" node1 "$HOME/.bitcoin/node1"
-          wait_for_rpc "$CLI2" node2 "$HOME/.bitcoin/node2"
-          wait_for_rpc "$CLI3" node3 "$HOME/.bitcoin/node3"
-
-      #################################################
-      # Connect cluster
-      #################################################
-
-      - name: Connect nodes
-        run: |
-          CLI1="bitcoin-cli -datadir=$HOME/.bitcoin/node1 -regtest"
-          CLI2="bitcoin-cli -datadir=$HOME/.bitcoin/node2 -regtest"
-          CLI3="bitcoin-cli -datadir=$HOME/.bitcoin/node3 -regtest"
-
+          # Connect nodes
           $CLI1 addnode "127.0.0.1:18446" add
           $CLI1 addnode "127.0.0.1:18448" add
           $CLI2 addnode "127.0.0.1:18444" add
           $CLI3 addnode "127.0.0.1:18444" add
+          
 
-          sleep 3
+          sleep 2
 
-      #################################################
-      # Create wallets
-      #################################################
-
-      - name: Create wallets
+      # ────────────────────────────────────────────────
+      # 4. CREATE WALLETS
+      # ────────────────────────────────────────────────
+      - name: Create wallets on all nodes
         run: |
-          CLI1="bitcoin-cli -datadir=$HOME/.bitcoin/node1 -regtest"
-          CLI2="bitcoin-cli -datadir=$HOME/.bitcoin/node2 -regtest"
-          CLI3="bitcoin-cli -datadir=$HOME/.bitcoin/node3 -regtest"
+          set -euo pipefail
 
-          $CLI1 createwallet miner_wallet
-          $CLI2 createwallet node2_wallet
-          $CLI3 createwallet node3_wallet
+          CLI1="bitcoin-cli -rpcport=18443 -rpcuser=user -rpcpassword=password -regtest"
+          CLI2="bitcoin-cli -rpcport=18445 -rpcuser=user -rpcpassword=password -regtest"
+          CLI3="bitcoin-cli -rpcport=18447 -rpcuser=user -rpcpassword=password -regtest"
 
-      #################################################
-      # Mine blocks
-      #################################################
+          $CLI1 createwallet "miner_wallet"
+          $CLI2 createwallet "node2_wallet"
+          $CLI3 createwallet "node3_wallet"
 
-      - name: Mine initial blocks
+          echo "✅ Wallets created"
+
+      # ────────────────────────────────────────────────
+      # 5. MINE BLOCKS
+      # ────────────────────────────────────────────────
+      - name: Mine initial blocks (make coinbase spendable)
         run: |
-          CLI1="bitcoin-cli -datadir=$HOME/.bitcoin/node1 -regtest -rpcwallet=miner_wallet"
+          set -euo pipefail
 
-          MINER_ADDR=$($CLI1 getnewaddress)
+          CLI1="bitcoin-cli -rpcport=18443 -rpcuser=user -rpcpassword=password -regtest -rpcwallet=miner_wallet"
 
-          $CLI1 generatetoaddress $MINE_BLOCKS $MINER_ADDR
+          MINER_ADDR=$($CLI1 getnewaddress "mining_reward")
+          echo "⛏️  Mining $MINE_BLOCKS blocks to miner address: $MINER_ADDR"
 
+          $CLI1 generatetoaddress $MINE_BLOCKS "$MINER_ADDR" | tail -3
+          echo "..."
+
+          BALANCE=$($CLI1 getbalance)
+          BLOCK_COUNT=$($CLI1 getblockcount)
+
+          echo "✅ Block height:  $BLOCK_COUNT"
+          echo "✅ Miner balance: $BALANCE BTC"
+
+          # Export for downstream steps
           echo "MINER_ADDR=$MINER_ADDR" >> $GITHUB_ENV
+          echo "BLOCK_COUNT=$BLOCK_COUNT" >> $GITHUB_ENV
 
-      #################################################
-      # Resolve target address
-      #################################################
-
-      - name: Resolve target address
+      # ────────────────────────────────────────────────
+      # 6. RESOLVE TARGET ADDRESS
+      # ────────────────────────────────────────────────
+      - name: Resolve target fund address
         run: |
-          CLI3="bitcoin-cli -datadir=$HOME/.bitcoin/node3 -regtest -rpcwallet=node3_wallet"
+          set -euo pipefail
 
+          CLI3="bitcoin-cli -rpcport=18447 -rpcuser=user -rpcpassword=password -regtest -rpcwallet=node3_wallet"
+
+          # Use manually provided address or auto-generate one on node3
           if [ -n "${{ github.event.inputs.fund_address }}" ]; then
             TARGET_ADDR="${{ github.event.inputs.fund_address }}"
+            echo "📌 Using provided address: $TARGET_ADDR"
           else
-            TARGET_ADDR=$($CLI3 getnewaddress)
+            TARGET_ADDR=$($CLI3 getnewaddress "receive_funds")
+            echo "📌 Auto-generated address on node3: $TARGET_ADDR"
           fi
 
           echo "TARGET_ADDR=$TARGET_ADDR" >> $GITHUB_ENV
 
-      #################################################
-      # Send funds
-      #################################################
-
-      - name: Send funds
+      # ────────────────────────────────────────────────
+      # 7. SEND FUNDS
+      # ────────────────────────────────────────────────
+      - name: Send funds to target address
         run: |
-          CLI1="bitcoin-cli -datadir=$HOME/.bitcoin/node1 -regtest -rpcwallet=miner_wallet"
+          set -euo pipefail
 
+          CLI1="bitcoin-cli -rpcport=18443 -rpcuser=user -rpcpassword=password -regtest -rpcwallet=miner_wallet"
+
+          echo "💸 Sending $FUND_AMOUNT BTC → $TARGET_ADDR"
           TXID=$($CLI1 sendtoaddress "$TARGET_ADDR" $FUND_AMOUNT)
+          echo "📝 TXID: $TXID"
 
-          $CLI1 generatetoaddress 6 $MINER_ADDR
+          # Mine 6 more blocks to confirm the transaction
+          $CLI1 generatetoaddress 6 "$MINER_ADDR" > /dev/null
+          echo "⛏️  Mined 6 confirmation blocks"
 
           echo "TXID=$TXID" >> $GITHUB_ENV
 
-      #################################################
-      # Verify
-      #################################################
-
-      - name: Verify funds
+      # ────────────────────────────────────────────────
+      # 8. VERIFY FUNDS AT ADDRESS
+      # ────────────────────────────────────────────────
+      - name: Verify funds are present at address
         run: |
-          CLI3="bitcoin-cli -datadir=$HOME/.bitcoin/node3 -regtest -rpcwallet=node3_wallet"
+          set -euo pipefail
 
-          RECEIVED=$($CLI3 getreceivedbyaddress "$TARGET_ADDR" 1)
+          # Use whichever node owns the wallet with the target address
+          # For auto-generated addresses -> node3; for external -> scan node3 anyway
+          CLI3="bitcoin-cli -rpcport=18447 -rpcuser=user -rpcpassword=password -regtest -rpcwallet=node3_wallet"
+          CLI1="bitcoin-cli -rpcport=18443 -rpcuser=user -rpcpassword=password -regtest -rpcwallet=miner_wallet"
 
-          echo "Received: $RECEIVED BTC"
+          echo "🔍 Verifying transaction on-chain..."
 
-          python3 - <<EOF
-          import sys
-          if float("$RECEIVED") < float("$FUND_AMOUNT"):
-              sys.exit("Funds not received")
-          print("Funds verified")
-          EOF
+          # 1. Confirm tx is included in a block
+          TX_INFO=$($CLI1 gettransaction "$TXID" true 2>/dev/null || \
+                    bitcoin-cli -rpcport=18447 -rpcuser=user -rpcpassword=password -regtest \
+                      -rpcwallet=node3_wallet gettransaction "$TXID" true)
 
-      #################################################
-      # Summary
-      #################################################
+          CONFIRMATIONS=$(echo "$TX_INFO" | python3 -c "import sys,json; print(json.load(sys.stdin)['confirmations'])")
+          echo "✅ Confirmations: $CONFIRMATIONS"
 
-      - name: Cluster summary
+          if [ "$CONFIRMATIONS" -lt 1 ]; then
+            echo "❌ Transaction is unconfirmed!"
+            exit 1
+          fi
+
+          # 2. Check received amount at the address (node3 wallet for auto-generated)
+          if [ -z "${{ github.event.inputs.fund_address }}" ]; then
+            RECEIVED=$($CLI3 getreceivedbyaddress "$TARGET_ADDR" 1)
+            echo "💰 Received at $TARGET_ADDR: $RECEIVED BTC"
+
+            EXPECTED=$(python3 -c "print($FUND_AMOUNT)")
+            OK=$(python3 -c "print('yes' if float('$RECEIVED') >= float('$EXPECTED') else 'no')")
+
+            if [ "$OK" != "yes" ]; then
+              echo "❌ Expected at least $FUND_AMOUNT BTC, got $RECEIVED BTC"
+              exit 1
+            fi
+            echo "✅ Balance check passed: $RECEIVED BTC >= $FUND_AMOUNT BTC"
+          else
+            # For externally provided addresses, verify via scantxoutset
+            echo "🔎 Scanning UTXO set for external address $TARGET_ADDR..."
+            SCAN=$($CLI1 scantxoutset start "[\"addr($TARGET_ADDR)\"]")
+            TOTAL=$(echo "$SCAN" | python3 -c "import sys,json; print(json.load(sys.stdin)['total_amount'])")
+            echo "💰 UTXO balance at $TARGET_ADDR: $TOTAL BTC"
+
+            OK=$(python3 -c "print('yes' if float('$TOTAL') >= float('$FUND_AMOUNT') else 'no')")
+            if [ "$OK" != "yes" ]; then
+              echo "❌ Expected at least $FUND_AMOUNT BTC, got $TOTAL BTC"
+              exit 1
+            fi
+            echo "✅ Balance check passed: $TOTAL BTC >= $FUND_AMOUNT BTC"
+          fi
+
+      # ────────────────────────────────────────────────
+      # 9. SUMMARY
+      # ────────────────────────────────────────────────
+      - name: Print cluster summary
         if: always()
         run: |
-          for NODE in node1 node2 node3; do
-            HEIGHT=$(bitcoin-cli -datadir=$HOME/.bitcoin/$NODE -regtest getblockcount || echo "?")
-            PEERS=$(bitcoin-cli -datadir=$HOME/.bitcoin/$NODE -regtest getconnectioncount || echo "?")
-            echo "$NODE height=$HEIGHT peers=$PEERS"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "       Bitcoin Regtest CI Summary"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          for NODE_INFO in "node1:18443" "node2:18445" "node3:18447"; do
+            NODE="${NODE_INFO%%:*}"
+            PORT="${NODE_INFO##*:}"
+            HEIGHT=$(bitcoin-cli -rpcport=$PORT -rpcuser=user -rpcpassword=password \
+              -regtest getblockcount 2>/dev/null || echo "offline")
+            PEERS=$(bitcoin-cli -rpcport=$PORT -rpcuser=user -rpcpassword=password \
+              -regtest getconnectioncount 2>/dev/null || echo "?")
+            echo "  $NODE  | height=$HEIGHT  peers=$PEERS"
           done
 
-      #################################################
-      # Stop nodes
-      #################################################
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  TXID:           ${TXID:-n/a}"
+          echo "  Target address: ${TARGET_ADDR:-n/a}"
+          echo "  Amount sent:    $FUND_AMOUNT BTC"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-      - name: Stop nodes
+      # ────────────────────────────────────────────────
+      # 10. TEARDOWN
+      # ────────────────────────────────────────────────
+      - name: Stop all nodes
         if: always()
         run: |
-          for NODE in node1 node2 node3; do
-            bitcoin-cli -datadir=$HOME/.bitcoin/$NODE -regtest stop || true
+          for RPCPORT in 18443 18445 18447; do
+            bitcoin-cli -rpcport=$RPCPORT -rpcuser=user -rpcpassword=password \
+              -regtest stop 2>/dev/null && echo "Stopped node on port $RPCPORT" || true
           done
