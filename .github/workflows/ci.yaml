@@ -194,7 +194,7 @@ jobs:
       - name: Mine initial blocks (make coinbase spendable)
         run: |
           set -euo pipefail
-          CLI1="bitcoin-cli -rpcport=18443 -rpcuser=user -rpcpassword=password -regtest -rpcwallet=miner_wallet"
+          CLI1="bitcoin-cli -rpcport=18460 -rpcuser=user -rpcpassword=password -regtest -rpcwallet=miner_wallet"
           MINER_ADDR=$($CLI1 getnewaddress "mining_reward")
           echo "⛏️  Mining $MINE_BLOCKS blocks to miner address: $MINER_ADDR"
           $CLI1 generatetoaddress $MINE_BLOCKS "$MINER_ADDR" | tail -3
@@ -203,7 +203,6 @@ jobs:
           BLOCK_COUNT=$($CLI1 getblockcount)
           echo "✅ Block height:  $BLOCK_COUNT"
           echo "✅ Miner balance: $BALANCE BTC"
-          # Export for downstream steps
           echo "MINER_ADDR=$MINER_ADDR" >> $GITHUB_ENV
           echo "BLOCK_COUNT=$BLOCK_COUNT" >> $GITHUB_ENV
       # ────────────────────────────────────────────────
