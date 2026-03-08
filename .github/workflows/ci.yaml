@@ -14,8 +14,10 @@ on:
 
 env:
   BITCOIN_VERSION: "27.0"
-  FUND_AMOUNT: "10" # BTC to send to the target address
-  MINE_BLOCKS: "101" # Must be >100 so coinbase is spendable
+  FUND_AMOUNT: "10"
+  MINE_BLOCKS: "101"
+  BASE_PORT: 18440
+  BASE_RPC: 18441
 
 jobs:
   regtest-cluster:
@@ -59,31 +61,32 @@ jobs:
           mkdir -p $HOME/.bitcoin/node1 $HOME/.bitcoin/node2 $HOME/.bitcoin/node3
 
           for NODE in node1 node2 node3; do
-            DIR="$HOME/.bitcoin/$NODE"
-            mkdir -p "$DIR"
+              DIR="$HOME/.bitcoin/$NODE"
+              mkdir -p "$DIR"
 
-            case $NODE in
-              node1) PORT=18444; RPCPORT=18443 ;;
-              node2) PORT=18446; RPCPORT=18445 ;;
-              node3) PORT=18448; RPCPORT=18447 ;;
-            esac
+              case $NODE in
+                node1) PORT=$P2P1; RPCPORT=$RPC1 ;;
+                node2) PORT=$P2P2; RPCPORT=$RPC2 ;;
+                node3) PORT=$P2P3; RPCPORT=$RPC3 ;;
+              esac
 
-            cat > "$DIR/bitcoin.conf" <<EOF
-          regtest=1
-          server=1
-          listen=1
-          rpcuser=user
-          rpcpassword=password
-          rpcallowip=127.0.0.1
-          fallbackfee=0.0001
+              cat > "$DIR/bitcoin.conf" <<EOF
+            regtest=1
+            server=1
+            listen=1
+            rpcuser=user
+            rpcpassword=password
+            rpcallowip=127.0.0.1
+            fallbackfee=0.0001
 
-          [regtest]
-          port=$PORT
-          rpcport=$RPCPORT
-          bind=127.0.0.1
-          rpcbind=127.0.0.1
-          EOF
+            [regtest]
+            port=$PORT
+            rpcport=$RPCPORT
+            bind=127.0.0.1
+            rpcbind=127.0.0.1
+            EOF
 
+            done
             echo "--- $NODE/bitcoin.conf ---"
             cat "$DIR/bitcoin.conf"
           done
@@ -96,6 +99,21 @@ jobs:
       - name: Start regtest nodes
         run: |
           set -euo pipefail
+
+          RUN_NUMBER=${GITHUB_RUN_NUMBER:-1}   # fallback to 1 if undefined
+
+          # Node RPC and P2P ports
+          RPC1=$((BASE_RPC + RUN_NUMBER * 10 + 1))
+          RPC2=$((BASE_RPC + RUN_NUMBER * 10 + 2))
+          RPC3=$((BASE_RPC + RUN_NUMBER * 10 + 3))
+
+          P2P1=$((BASE_PORT + RUN_NUMBER * 10 + 1))
+          P2P2=$((BASE_PORT + RUN_NUMBER * 10 + 2))
+          P2P3=$((BASE_PORT + RUN_NUMBER * 10 + 3))
+
+          echo "Node1 RPC=$RPC1 P2P=$P2P1"
+          echo "Node2 RPC=$RPC2 P2P=$P2P2"
+          echo "Node3 RPC=$RPC3 P2P=$P2P3"
 
           echo "🧹 Killing any existing bitcoind..."
           sudo pkill -9 bitcoind || true
@@ -174,9 +192,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          CLI1="bitcoin-cli -datadir=$HOME/.bitcoin/node1 -regtest"
-          CLI2="bitcoin-cli -datadir=$HOME/.bitcoin/node2 -regtest"
-          CLI3="bitcoin-cli -datadir=$HOME/.bitcoin/node3 -regtest"
+          CLI1="bitcoin-cli -rpcport=$RPC1 -rpcuser=user -rpcpassword=password -regtest"
+          CLI2="bitcoin-cli -rpcport=$RPC2 -rpcuser=user -rpcpassword=password -regtest"
+          CLI3="bitcoin-cli -rpcport=$RPC3 -rpcuser=user -rpcpassword=password -regtest"
+
+          
 
           wait_for_rpc_ready() {
             local CLI="$1"
@@ -202,10 +222,10 @@ jobs:
           wait_for_rpc_ready "$CLI3" node3 "$HOME/.bitcoin/node3"
 
           # Connect nodes
-          $CLI1 addnode "127.0.0.1:18446" add
-          $CLI1 addnode "127.0.0.1:18448" add
-          $CLI2 addnode "127.0.0.1:18444" add
-          $CLI3 addnode "127.0.0.1:18444" add
+          $CLI1 addnode "127.0.0.1:$P2P2" add
+          $CLI1 addnode "127.0.0.1:$P2P3" add
+          $CLI2 addnode "127.0.0.1:$P2P1" add
+          $CLI3 addnode "127.0.0.1:$P2P1" add
           
 
           sleep 2
