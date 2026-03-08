@@ -94,15 +94,33 @@ jobs:
         run: |
           set -euo pipefail
 
+          rm -rf $HOME/.bitcoin/node1 $HOME/.bitcoin/node2 $HOME/.bitcoin/node3
+          mkdir -p $HOME/.bitcoin/node1 $HOME/.bitcoin/node2 $HOME/.bitcoin/node3
+          
           echo "🧹 Killing any existing bitcoind..."
           sudo pkill -9 bitcoind || true
           sleep 2
 
-          echo "🧹 Ensure ports are free..."
+          echo "🧹 Waiting for ports to be free..."
           for PORT in 18443 18444 18445 18446 18447 18448; do
-              sudo fuser -k ${PORT}/tcp 2>/dev/null || true
+              while ss -ltnp | grep -q $PORT; do
+                  echo "⏳ Waiting for port $PORT to free up..."
+                  sleep 1
+              done
           done
-          sleep 1
+          echo "✅ All ports free"
+
+          echo "🧹 Stopping any leftover nodes from previous runs..."
+          pkill -9 bitcoind || true
+          sleep 2
+
+          # Ensure ports are free
+          for PORT in 18443 18444 18445 18446 18447 18448; do
+              while ss -ltnp | grep -q $PORT; do
+                  fuser -k $PORT/tcp 2>/dev/null || true
+                  sleep 1
+              done
+          done
 
           mkdir -p $HOME/.bitcoin/node1
           mkdir -p $HOME/.bitcoin/node2
@@ -114,10 +132,10 @@ jobs:
               local NAME="$2"
               local DIR="$3"
 
-              for i in {1..60}; do
-                  if $CLI getblockcount >/dev/null 2>&1; then
-                      echo "✅ $NAME RPC ready"
-                      return 0
+              for i in {1..90}; do
+                  if bitcoin-cli -rpcport=$RPCPORT -rpcuser=user -rpcpassword=password -regtest getblockcount >/dev/null 2>&1; then
+                      echo "✅ $NODE RPC ready on port $RPCPORT"
+                      break
                   fi
                   sleep 1
               done
@@ -135,19 +153,15 @@ jobs:
           # Start nodes safely
           for NODE in node1 node2 node3; do
               DATADIR="$HOME/.bitcoin/$NODE"
-              case $NODE in
-                  node1) RPCPORT=18443 ;;
-                  node2) RPCPORT=18445 ;;
-                  node3) RPCPORT=18447 ;;
-              esac
+              RPCPORT=$(grep rpcport "$DATADIR/bitcoin.conf" | cut -d'=' -f2)
 
-              echo "🚀 Starting $NODE"
+              echo "🚀 Starting $NODE..."
               bitcoind -conf="$DATADIR/bitcoin.conf" -datadir="$DATADIR" -daemon
 
-              # Wait for RPC ready
+              # Wait for RPC to respond
               for i in {1..60}; do
-                  if bitcoin-cli -datadir="$DATADIR" -regtest getblockcount >/dev/null 2>&1; then
-                      echo "✅ $NODE RPC ready"
+                  if bitcoin-cli -rpcport=$RPCPORT -rpcuser=user -rpcpassword=password -regtest getblockcount >/dev/null 2>&1; then
+                      echo "✅ $NODE RPC ready on port $RPCPORT"
                       break
                   fi
                   sleep 1
