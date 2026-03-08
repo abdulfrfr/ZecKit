@@ -232,22 +232,20 @@ jobs:
           ss -ltnp | grep 184 || true
 
           # Start nodes safely
-          for NODE in node1 node2 node3; do
-              DATADIR="$HOME/.bitcoin/$NODE"
-              RPCPORT=$(grep rpcport "$DATADIR/bitcoin.conf" | cut -d'=' -f2)
+          bitcoind -datadir=$HOME/.bitcoin/node1 \
+            -port=$P2P1 \
+            -rpcport=$RPC1 \
+            -daemon
 
-              echo "🚀 Starting $NODE..."
-              bitcoind -conf="$DATADIR/bitcoin.conf" -datadir="$DATADIR" -daemon
+          bitcoind -datadir=$HOME/.bitcoin/node2 \
+            -port=$P2P2 \
+            -rpcport=$RPC2 \
+            -daemon
 
-              # Wait for RPC to respond
-              for i in {1..60}; do
-                  if bitcoin-cli -rpcport=$RPCPORT -rpcuser=user -rpcpassword=password -regtest getblockcount >/dev/null 2>&1; then
-                      echo "✅ $NODE RPC ready on port $RPCPORT"
-                      break
-                  fi
-                  sleep 1
-              done
-          done
+          bitcoind -datadir=$HOME/.bitcoin/node3 \
+            -port=$P2P3 \
+            -rpcport=$RPC3 \
+            -daemon
 
           echo "✅ All nodes running"
           
