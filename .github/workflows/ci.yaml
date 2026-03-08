@@ -94,6 +94,15 @@ jobs:
         run: |
           set -euo pipefail
 
+          set -euo pipefail
+
+          # Kill anything using Bitcoin regtest ports
+          for PORT in 18443 18444 18445 18446 18447 18448; do
+            fuser -k ${PORT}/tcp 2>/dev/null || true
+          done
+
+          sleep 2
+
           ss -ltnp | grep 184 || true
 
           wait_for_rpc() {
@@ -119,13 +128,26 @@ jobs:
           for NODE in node1 node2 node3; do
             DATADIR="$HOME/.bitcoin/$NODE"
 
-            echo "🚀 Starting $NODE"
-            bitcoind \
-            -conf="$DATADIR/bitcoin.conf" \
-            -datadir="$DATADIR" \
-            -daemon
+            case $NODE in
+              node1) RPCPORT=18443 ;;
+              node2) RPCPORT=18445 ;;
+              node3) RPCPORT=18447 ;;
+            esac
 
-            wait_for_rpc "$NODE" "$DATADIR"
+            echo "🚀 Starting $NODE"
+
+            bitcoind \
+              -conf="$DATADIR/bitcoin.conf" \
+              -datadir="$DATADIR" \
+              -daemon
+
+            for i in {1..45}; do
+              if bitcoin-cli -rpcport=$RPCPORT -rpcuser=user -rpcpassword=password -regtest ping 2>/dev/null; then
+                echo "  ✅ $NODE ready"
+                break
+              fi
+              sleep 1
+            done
           done
 
           echo "✅ All nodes running"
