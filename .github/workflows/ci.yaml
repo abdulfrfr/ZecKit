@@ -181,9 +181,9 @@ jobs:
       - name: Create wallets on all nodes
         run: |
           set -euo pipefail
-          CLI1="bitcoin-cli -rpcport=18443 -rpcuser=user -rpcpassword=password -regtest"
-          CLI2="bitcoin-cli -rpcport=18445 -rpcuser=user -rpcpassword=password -regtest"
-          CLI3="bitcoin-cli -rpcport=18447 -rpcuser=user -rpcpassword=password -regtest"
+          CLI1="bitcoin-cli -rpcport=18460 -rpcuser=user -rpcpassword=password -regtest"
+          CLI2="bitcoin-cli -rpcport=18462 -rpcuser=user -rpcpassword=password -regtest"
+          CLI3="bitcoin-cli -rpcport=18464 -rpcuser=user -rpcpassword=password -regtest"
           $CLI1 createwallet "miner_wallet"
           $CLI2 createwallet "node2_wallet"
           $CLI3 createwallet "node3_wallet"
