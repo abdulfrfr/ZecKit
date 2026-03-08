@@ -72,10 +72,9 @@ jobs:
           rpcuser=user
           rpcpassword=password
           rpcallowip=127.0.0.1
+          rpcbind=127.0.0.1
+          bind=127.0.0.1
           fallbackfee=0.0001
-          EOF
-
-            cat >> "$DIR/bitcoin.conf" <<EOF
 
           [regtest]
           port=$PORT
@@ -95,6 +94,8 @@ jobs:
         run: |
           set -euo pipefail
 
+          ss -ltnp | grep 184 || true
+          
           wait_for_rpc() {
             local NAME=$1
             local DATADIR=$2
