@@ -60,6 +60,15 @@ jobs:
           rm -rf $HOME/.bitcoin/node1 $HOME/.bitcoin/node2 $HOME/.bitcoin/node3
           mkdir -p $HOME/.bitcoin/node1 $HOME/.bitcoin/node2 $HOME/.bitcoin/node3
 
+          # define ports
+          P2P1=$BASE_PORT
+          P2P2=$((BASE_PORT+2))
+          P2P3=$((BASE_PORT+4))
+
+          RPC1=$BASE_RPC
+          RPC2=$((BASE_RPC+2))
+          RPC3=$((BASE_RPC+4))
+
           for NODE in node1 node2 node3; do
               DIR="$HOME/.bitcoin/$NODE"
               mkdir -p "$DIR"
