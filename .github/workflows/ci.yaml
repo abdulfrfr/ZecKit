@@ -71,24 +71,23 @@ jobs:
               esac
 
               cat > "$DIR/bitcoin.conf" <<EOF
-            regtest=1
-            server=1
-            listen=1
-            rpcuser=user
-            rpcpassword=password
-            rpcallowip=127.0.0.1
-            fallbackfee=0.0001
+          regtest=1
+          server=1
+          listen=1
+          rpcuser=user
+          rpcpassword=password
+          rpcallowip=127.0.0.1
+          fallbackfee=0.0001
 
-            [regtest]
-            port=$PORT
-            rpcport=$RPCPORT
-            bind=127.0.0.1
-            rpcbind=127.0.0.1
-            EOF
+          [regtest]
+          port=$PORT
+          rpcport=$RPCPORT
+          bind=127.0.0.1
+          rpcbind=127.0.0.1
+          EOF
 
-            done
-            echo "--- $NODE/bitcoin.conf ---"
-            cat "$DIR/bitcoin.conf"
+              echo "--- $NODE/bitcoin.conf ---"
+              cat "$DIR/bitcoin.conf"
           done
 
           echo "✅ Config written for node1 (miner), node2, node3"
