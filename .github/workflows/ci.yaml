@@ -148,10 +148,6 @@ jobs:
               done
           done
 
-          rm -rf $HOME/.bitcoin/node1
-          rm -rf $HOME/.bitcoin/node2
-          rm -rf $HOME/.bitcoin/node3
-
           mkdir -p $HOME/.bitcoin/node1
           mkdir -p $HOME/.bitcoin/node2
           mkdir -p $HOME/.bitcoin/node3
