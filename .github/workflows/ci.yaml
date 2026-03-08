@@ -148,65 +148,10 @@ jobs:
               done
           done
 
-          # clean previous runs
-          rm -rf $HOME/.bitcoin/node1
-          rm -rf $HOME/.bitcoin/node2
-          rm -rf $HOME/.bitcoin/node3
-
           mkdir -p $HOME/.bitcoin/node1
           mkdir -p $HOME/.bitcoin/node2
           mkdir -p $HOME/.bitcoin/node3
 
-
-          cat > $HOME/.bitcoin/node1/bitcoin.conf <<EOF
-          regtest=1
-          server=1
-          listen=1
-          rpcuser=user
-          rpcpassword=password
-          rpcallowip=127.0.0.1
-          fallbackfee=0.0001
-
-          [regtest]
-          port=$P2P1
-          rpcport=$RPC1
-          bind=127.0.0.1
-          rpcbind=127.0.0.1
-          EOF
-
-
-          cat > $HOME/.bitcoin/node2/bitcoin.conf <<EOF
-          regtest=1
-          server=1
-          listen=1
-          rpcuser=user
-          rpcpassword=password
-          rpcallowip=127.0.0.1
-          fallbackfee=0.0001
-
-          [regtest]
-          port=$P2P2
-          rpcport=$RPC2
-          bind=127.0.0.1
-          rpcbind=127.0.0.1
-          EOF
-
-
-          cat > $HOME/.bitcoin/node3/bitcoin.conf <<EOF
-          regtest=1
-          server=1
-          listen=1
-          rpcuser=user
-          rpcpassword=password
-          rpcallowip=127.0.0.1
-          fallbackfee=0.0001
-
-          [regtest]
-          port=$P2P3
-          rpcport=$RPC3
-          bind=127.0.0.1
-          rpcbind=127.0.0.1
-          EOF
 
           wait_for_rpc_ready() {
               local CLI="$1"
@@ -231,21 +176,23 @@ jobs:
           ps aux | grep bitcoind || true
           ss -ltnp | grep 184 || true
 
-          # START NODES
-          bitcoind -datadir=$HOME/.bitcoin/node1 \
-            -port=$P2P1 \
-            -rpcport=$RPC1 \
-            -daemon
+          # Start nodes safely
+          for NODE in node1 node2 node3; do
+              DATADIR="$HOME/.bitcoin/$NODE"
+              RPCPORT=$(grep rpcport "$DATADIR/bitcoin.conf" | cut -d'=' -f2)
 
-          bitcoind -datadir=$HOME/.bitcoin/node2 \
-            -port=$P2P2 \
-            -rpcport=$RPC2 \
-            -daemon
+              echo "🚀 Starting $NODE..."
+              bitcoind -conf="$DATADIR/bitcoin.conf" -datadir="$DATADIR" -daemon
 
-          bitcoind -datadir=$HOME/.bitcoin/node3 \
-            -port=$P2P3 \
-            -rpcport=$RPC3 \
-            -daemon
+              # Wait for RPC to respond
+              for i in {1..60}; do
+                  if bitcoin-cli -rpcport=$RPCPORT -rpcuser=user -rpcpassword=password -regtest getblockcount >/dev/null 2>&1; then
+                      echo "✅ $NODE RPC ready on port $RPCPORT"
+                      break
+                  fi
+                  sleep 1
+              done
+          done
 
           echo "✅ All nodes running"
           
