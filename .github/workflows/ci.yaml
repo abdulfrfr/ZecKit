@@ -95,49 +95,36 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Helper: wait until a node's RPC is accepting connections, or fail hard
           wait_for_rpc() {
             local NAME=$1
-            local PORT=$2
-            local DATADIR=$3
+            local DATADIR=$2
             local RETRIES=45
-            echo "⏳ Waiting for $NAME (RPC :$PORT)..."
+
+            echo "⏳ Waiting for $NAME..."
+
             for i in $(seq 1 $RETRIES); do
-              if bitcoin-cli \
-                  -rpcport="$PORT" \
-                  -rpcuser=user \
-                  -rpcpassword=password \
-                  -regtest \
-                  ping 2>/dev/null; then
-                echo "  ✅ $NAME is ready (attempt $i)"
+              if bitcoin-cli -datadir="$DATADIR" ping 2>/dev/null; then
+                echo "  ✅ $NAME ready (attempt $i)"
                 return 0
               fi
               sleep 1
             done
-            echo "  ❌ $NAME did not become ready after ${RETRIES}s"
-            echo "  --- debug: last 20 lines of debug.log ---"
-            tail -20 "$DATADIR/regtest/debug.log" 2>/dev/null || echo "  (no debug.log found)"
-            echo "  --- bitcoin.conf ---"
-            cat "$DATADIR/bitcoin.conf" 2>/dev/null || true
-            return 1
+
+            echo "❌ $NAME did not start"
+            tail -20 "$DATADIR/regtest/debug.log" || true
+            exit 1
           }
 
-          # Start each node then immediately wait for it before starting the next.
           for NODE in node1 node2 node3; do
             DATADIR="$HOME/.bitcoin/$NODE"
-            case $NODE in
-              node1) RPCPORT=18443 ;;
-              node2) RPCPORT=18445 ;;
-              node3) RPCPORT=18447 ;;
-            esac
 
-            echo "🚀 Starting $NODE..."
-            bitcoind -datadir="$DATADIR" -daemonwait
-            wait_for_rpc "$NODE" "$RPCPORT" "$DATADIR"
+            echo "🚀 Starting $NODE"
+            bitcoind -datadir="$DATADIR" -daemon
+
+            wait_for_rpc "$NODE" "$DATADIR"
           done
 
-          echo "✅ All 3 nodes are up"
-
+          echo "✅ All nodes running"
       - name: Connect nodes into a cluster
         run: |
           set -euo pipefail
